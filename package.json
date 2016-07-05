@@ -1,0 +1,9 @@
+{
+  "name": "bot",
+  "version": "1.0.0",
+  "main": "bot.js",
+  "dependencies": {
+    "underscore": "1.8.3",
+    "twilio": "2.9.1"
+  }
+}
