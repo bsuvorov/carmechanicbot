@@ -16,10 +16,10 @@
  * This will creates an endpoint at https://botpad.ai/webhook/[userid]/[provider][botid]/customurl for the HTTP method provided at the first parameter
  */
 
-const Bot = require('base_bot');
-const pageInfos = require('./customerinfo');
-const fbMessagingService = require('./fbmessaging.js');
-const carStatusMessage = require('./carstatusmessage.js')
+var Bot = require('base_bot');
+var pageInfos = require('./customerinfo');
+var fbMessagingService = require('./fbmessaging.js');
+var carStatusMessage = require('./carstatusmessage.js');
 
 //require the Twilio module and create a REST client
 // Twilio Credentials
@@ -169,7 +169,6 @@ function sendSMSMessageToPhoneNumber(smsMessage, phoneNumber, completion) {
   });
 }
 
-
 const postbackNullMenuServiceAppointment = "postbackNullMenuServiceAppointment";
 const postbackNullMenuServiceHistory = "postbackNullMenuServiceHistory";
 const postbackNullMenuRequestQuote = "postbackNullMenuRequestQuote";
@@ -189,32 +188,41 @@ const greetingPostbackButtons = [
   fbMessagingService.postbackPayload("Yes", JSON.stringify({action: postbackServicedBeforeYes})),
   fbMessagingService.postbackPayload("No", JSON.stringify({action: postbackServicedBeforeNo}))];
 
+
+function attemptToSendMessageTo(senderID, pageToken, message) {
+  if (ignoreList.has(senderID)) {
+    return;
+  }
+
+  fbMessagingService.sendFacebookTextMessage(senderID, pageToken, message);
+}
+
 function handlePostbackCommand(pageID, senderID, fullPostback) {
   let postback = fullPostback.split("_")[0];
   let pageToken = pageInfos[pageID].token;
   if (postback == postbackGetStarted) {
     return sendGetStartedForPageIDSenderID(pageID, senderID);
   } else if (postback == postbackWillPickUpToday) {
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
   } else if (postback == postbackDenyPickupToday) {
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks for letting us know! We will wait for you the next business day.`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks for letting us know! We will wait for you the next business day.`);
   } else if (postback == postbackConfirmReceivingMessage) {
     let phoneNumber = fullPostback.split("_")[1];
     log("unblocking " + phoneNumber);
     ignoreList.delete(phoneNumber);
     ignoreList.delete(senderID);
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
   } else if (postback == postbackDenyReceivingMessage) {
     let phoneNumber = fullPostback.split("_")[1];
     log("blocking " + phoneNumber);
     ignoreList.add(phoneNumber);
     ignoreList.add(senderID);
     log("User requested to avoid messaging them, id=", senderID);
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks. We won't send you any facebook or text messages anymore.`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks. We won't send you any facebook or text messages anymore.`);
   } else if (postback == postbackApproveRepairs) {
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
   } else if (postback == postbackRejectRepairs) {
-    return fbMessagingService.sendFacebookTextMessage(senderID, pageToken, `Thanks, we will call you shortly.`);
+    return attemptToSendMessageTo(senderID, pageToken, `Thanks, we will call you shortly.`);
   } else {
     log("Unknown request ", postback);
   }
@@ -234,32 +242,32 @@ function isNumeric(num){
 }
 
 function handleIncomingMessageFromAdmin(adminID, pageID, text) {
+  let pageToken = pageInfos[pageID].token;
   let phoneNumber = text.substring(0,10);
   if (isNumeric(phoneNumber)) {
     if (ignoreList.has("+1" + phoneNumber)) {
-      fbMessagingService.sendFacebookTextMessage(adminID, pageToken, phoneNumber + " added themselves to ignore list. Please call this customer.");
+      attemptToSendMessageTo(adminID, pageToken, phoneNumber + " added themselves to ignore list. Please call this customer.");
     } else {
       let message = text.substring(10, text.length).trim();
       if (message.length > 0) {
         log(`Sending to ${phoneNumber} text: ${message}`);
         sendSMSMessageToPhoneNumber(message, phoneNumber, function(error) {
           if (error) {
-            fbMessagingService.sendFacebookTextMessage(adminID, pageToken, error.message);
+            attemptToSendMessageTo(adminID, pageToken, error.message);
           } else {
-            fbMessagingService.sendFacebookTextMessage(adminID, pageToken, "Delivered message to " + phoneNumber);
+            attemptToSendMessageTo(adminID, pageToken, "Delivered message to " + phoneNumber);
           }
         });
       } else {
-        fbMessagingService.sendFacebookTextMessage(adminID, pageToken, "Message doesn't have correct body");
+        attemptToSendMessageTo(adminID, pageToken, "Message doesn't have correct body");
       }
     }
   } else {
-    fbMessagingService.sendFacebookTextMessage(adminID, pageToken, "Message doesn't appear to have correct phone number:" + phoneNumber);
+    attemptToSendMessageTo(adminID, pageToken, "Message doesn't appear to have correct phone number:" + phoneNumber);
   }
 }
 
 function handleMessage(senderID, pageID, text) {
-  let pageToken = pageInfos[pageID].token;
   for (let item of pageInfos[pageID].adminIDs) log(item);
   if (pageInfos[pageID].adminIDs.has(senderID)) {
     handleIncomingMessageFromAdmin(senderID, pageID, text);
@@ -355,8 +363,9 @@ class MyBot extends Bot {
       let messageForAdmin = ["From:", trimmedPhoneNumber,"\nText:", smsMessageDict.Body].join(" ");
       let pageID = twilioPhoneToPageID[smsMessageDict.To];
       let pageToken = pageInfos[pageID].token;
-      let adminID = pageInfos[pageID].adminID;
-      fbMessagingService.sendFacebookTextMessage(adminID, pageToken, messageForAdmin);
+      for (let adminID of pageInfos[pageID].adminIDs) {
+        attemptToSendMessageTo(adminID, pageToken, messageForAdmin);
+      }
       return res.status(200);
     });
   }

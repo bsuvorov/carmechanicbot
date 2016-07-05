@@ -47,6 +47,7 @@ service.formMessageDataWithTextAndButtons = (text, buttonsArray) =>  {
 };
 
 service.sendFacebookTextMessage = (senderID, pageToken, text) =>  {
+  service.log("Sending text", text, "to ", senderID);
   let messageData = {
     text: text
   };
@@ -60,13 +61,6 @@ service.postMessageDataToPhoneNumber = (phoneNumber, pageID, messageData, comple
 };
 
 service.postMessageDataToPageSenderID = (senderID, pageToken, messageData, completion) =>  {
-  if (ignoreList.has(senderID)) {
-    if (completion) {
-      completion(senderID + " is in the block group");
-    }
-    return;
-  }
-
   let recipientInfo = { id: senderID };
   service.postMessageDataRecipient(recipientInfo, pageToken, messageData, completion);
 };
