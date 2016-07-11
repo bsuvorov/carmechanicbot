@@ -5,12 +5,14 @@ var pageInfos = {
     pageID: "475909289137929",
     name: "Independence Car Service",
     adminIDs: new Set([
-      "373664222757699" // boris
+    //   "373664222757699", // boris
+      "1287092311320843", // dearov
+      "1104885749557061", // Mikhail
     ]),
     getStartedImage:"https://scontent.fsnc1-1.fna.fbcdn.net/v/t1.0-9/420371_475909652471226_792578669_n.jpg?oh=7483c628c320457e3f04d0f95974ef46&oe=58004C78",
     token: "EAAG83stmTOIBANzqkdW1ZC1L0Urh51k3vgWSMfQIFZAZCYvLuw0WBul1jNETNfTNhvdcyQnxVMLBCbA9oFSZCNYj4AdG2gdU4ZCvNqMeJhfQ7hh36sCrPP68yISUyL7ZA3X5JVUb9PTU4DjCswzIMi35sQ3uLMz6aRiVuHZB52RwgZDZD",
     realPhone: "+16509642033",
-    twilioPhone: "+16509008415",
+    twilioPhone: "+16509665743",
     description: "Independence Car Service is a family owned and operated auto repair facility, located in Mountain View, CA and serving this neighborhood for over 20 years. We service Honda and Acura Cars, as well as other Japanese made cars.",
     address: "2415 Old Middlefield Way, Mountain View, CA 94043"
   },
@@ -18,12 +20,14 @@ var pageInfos = {
     pageID: "1622837224700712",
     name: "CarMechanicBot",
     adminIDs: new Set([
-      "1058090820914762" // boris
+      "1058090820914762", // boris
+      "975273602569981", // dearov
+    //   "1245924212085103", // Erfan
     ]),
     getStartedImage:"https://scontent.fsnc1-1.fna.fbcdn.net/v/t1.0-9/12316460_804396259671940_662166421977340690_n.jpg?oh=53cc8e73ed7aaaaebd28854f77854649&oe=58374538",
     token: "EAAG83stmTOIBAIpUkpVqM4LN46nQreE9JsNHibLB9e2yGM5aTl0vrd7O1zjlxqlLL629tce2x0XtqiLjHBXkABQgdBMcsufktkgJFt9FA13FzXsuH2Knt5OYluRDWtTkIytHUJcz6uY6LMB4Sda9ZCpApRnbWoU2SuN1haAZDZD",
     realPhone: "+16509008415",
-    twilioPhone: "+16509008415",
+    twilioPhone: "+16509665743",
     address: "555 Palmetto avenue, Pacifica, CA",
     description: "I'm just a test bot page for testing"
   }

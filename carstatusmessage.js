@@ -4,10 +4,20 @@ const mCarIsReadyType = "Car is ready";
 const mCarDropOffType = "Confirm car dropoff";
 const mCarRepairsApprovalType = "Request car repair or parts approval";
 
+const postbackWillPickUpToday = "postbackWillPickUpToday";
+const postbackDenyPickupToday = "postbackDenyPickupToday";
+const postbackConfirmReceivingMessage = "postbackConfirmReceivingMessage";
+const postbackDenyReceivingMessage = "postbackDenyReceivingMessage";
+const postbackApproveRepairs = "postbackApproveRepairs";
+const postbackRejectRepairs = "postbackRejectRepairs";
+
+var fbMessagingService = require('./fbmessaging.js');
 
 class carStatusUpdateMessage {
-  constructor(message) {
+  constructor(message, page, log) {
     this.message = message;
+    this.log = log;
+    this.page = page;
   }
 
   get smsFormat() {
@@ -21,15 +31,15 @@ class carStatusUpdateMessage {
     if (this.message.fullname) {
       greeting = "Hi " + this.message.fullname + "!";
     }
-
+    let mmeShortcut = "https://m.me/" + this.page.pageID;
     if (this.message.type === mCarIsReadyType) {
-      typeSpecificMessage = "Your car is ready for pickup. As a reminder, we close at 6 pm. Please message us back if you can't pick it up today.";
+      typeSpecificMessage = "Independence Car Service here. Your car is ready for pickup. Please let us know when you plan to pick up your car.";
     } else if (this.message.type === mCarDropOffType) {
-      typeSpecificMessage = "Thank you for dropping off your car with us today. We will text you when your car is ready for pickup.";
+      typeSpecificMessage = "Thank you for dropping off your car with us today. We will text you when your car is ready for pickup. Want car repair updates sent to your Facebook? Register with our facebook bot at " + mmeShortcut ;
     } else if (this.message.type === mCarRepairsApprovalType) {
-      typeSpecificMessage = [this.message.desc, ". Parts $", this.message.parts, ", labor $", this.message.labor, "."].join();
+      typeSpecificMessage = ["We recommend following repairs: " + this.message.desc, ". Total cost is ", this.message.totalcost, "."].join("");
     } else {
-      console.log("Uknown message type: ", this.message.type);
+      this.log("Uknown message type: ", this.message.type);
       return null;
     }
 
@@ -65,7 +75,7 @@ class carStatusUpdateMessage {
       let rejectRepairs = fbMessagingService.postbackPayload("No, please call me", JSON.stringify({action: postbackRejectRepairs}));
       buttons = [approveRepairs, rejectRepairs];
     } else {
-      log("Uknown message type: ", this.message.type);
+      this.log("Uknown message type: ", this.message.type);
       return null;
     }
 

@@ -19,7 +19,9 @@
 var Bot = require('base_bot');
 var pageInfos = require('./customerinfo');
 var fbMessagingService = require('./fbmessaging.js');
-var carStatusMessage = require('./carstatusmessage.js');
+var CarStatusMessage = require('./carstatusmessage.js');
+var PNF = require('google-libphonenumber').PhoneNumberFormat;
+var phoneUtil = require('google-libphonenumber').PhoneNumberUtil.getInstance();
 
 //require the Twilio module and create a REST client
 // Twilio Credentials
@@ -34,19 +36,32 @@ var mongoose;
 var ignoreList = new Set();
 
 var twilioPhoneToPageID = {
-  "+16509008415": "1622837224700712"
+  "+16509008415": "1622837224700712",
+  "+16509665743": "475909289137929"
+};
+
+var chatFlowByPageID = {
+  "475909289137929": {},
+  "1622837224700712": {},
 };
 
 
 var UserModel;
+
+const eraseCommand = "erase_erase";
+function eraseDB() {
+  UserModel.remove({}, function() {
+    log("removed UserDB");
+  });
+}
 
 function lazyInitDB() {
   if (UserModel) {
     return;
   }
   var userSchema = mongoose.Schema({
-    phone:{type: String, unique: true},
-    psid: {type: String, unique: true},
+    phone:{type: Number, index: true, unique: true, sparse: true},
+    psid: {type: String, trim: true, index: true, unique: true, sparse: true},
     pageID:{type: String},
     info: {
       firstName: String,
@@ -54,23 +69,96 @@ function lazyInitDB() {
       profilePic: String,
       locale: String,
       timeZone: Number,
-      gender: String
+      gender: String,
     },
     cars: [{yearMakeModel: String, lastServiceMileage: Number, lastService: Date}],
-    shopname: {type: String, unique: true}
   });
 
   UserModel = mongoose.model('User', userSchema);
 }
 
+function saveFBUserInfoToDB(psid, pageID, callback) {
+  request({
+    url: 'https://graph.facebook.com/v2.6/'+psid+'?fields=first_name,last_name,profile_pic,locale,timezone,gender',
+    qs: { access_token: pageInfos[pageID].token },
+    method: 'GET'
+  }, function (error, response) {
+    if (error) {
+      log('Error sending message: ', error);
+      if (callback) {
+        callback(error, null);
+      }
+    } else if (response.body.error) {
+      log('Error: ', response.body.error);
+      if (callback) {
+        callback(response.body.error, null);
+      }
+    } else {
+      var data = JSON.parse(response.body);
+      log('Info fetched: ', data);
+      log('psid = ', psid);
+      var newUserEntry = new UserModel({
+        psid: psid,
+        pageID: pageID,
+        info: {
+          firstName: data.first_name,
+          lastName: data.last_name,
+          profilePic: data.profile_pic,
+          locale: data.locale,
+          timeZone: data.time_zone,
+          gender: data.gender,
+        }
+      });
+
+      newUserEntry.save(function (err) {
+        if (err) {
+          log(`Error while saving user with psid =${psid}, pageID=${pageID} error=${err}`);
+          if (callback) {
+            callback(err, null);
+          }
+        } else {
+          log("User saved");
+          if (callback) {
+            callback(null, newUserEntry);
+          }
+        }
+      });
+    }
+  });
+}
+
+function saveTargetUser(targetUser, phoneNumber) {
+  targetUser.phone = phoneNumber;
+  targetUser.save(function (err) {
+    if (err) {
+      log(`Error while saving user phone number ${phoneNumber}, error=${err}`);
+    } else {
+      log(`Saved user phone number ${phoneNumber}`);
+    }
+  });
+}
+
+function savePhoneNumberToUserWith(psid, pageID, phoneNumber) {
+  fetchUserModelByPSID(psid, pageID, function(targetUser) {
+    if (targetUser) {
+      saveTargetUser(targetUser, phoneNumber);
+    } else {
+      saveFBUserInfoToDB(psid, pageID, function(error, targetUser) {
+        if (targetUser) {
+          saveTargetUser(targetUser, phoneNumber);
+        }
+      })
+    }
+  });
+}
+
 function sendGetStartedForPageIDSenderID(pageID, senderID) {
   let page = pageInfos[pageID];
-  let getStartedMessage = templateWithImageURLTitleSubtitleAndButtons(
+  let getStartedMessage = fbMessagingService.templateWithImageURLTitleSubtitleAndButtons(
     page.getStartedImage, "Welcome to " + page.name + ". Have you serviced your car with us before?", null, greetingPostbackButtons);
 
   fbMessagingService.postMessageDataToPageSenderID(senderID, page.token, getStartedMessage);
 }
-
 
 function setGetStartedPostback(pageID, token) {
   let callToActions = [{payload: JSON.stringify({action: postbackGetStarted})}];
@@ -84,20 +172,24 @@ function setNullStateMenu(pageID, token) {
     title: "Schedule Service Appointment"},
 
     {type: "postback",
-    payload: JSON.stringify({action: postbackNullMenuServiceHistory}),
-    title: "Service History"},
+    payload: JSON.stringify({action: postbackNullMenuResetChat}),
+    title: "Go to the first menu"},
 
-    {type: "postback",
-    payload: JSON.stringify({action: postbackNullMenuRequestQuote}),
-    title: "Request a Quote"},
-
-    {type: "postback",
-    payload: JSON.stringify({action: postbackNullMenuSpecials}),
-    title: "Specials"},
-
-    {type: "postback",
-    payload: JSON.stringify({action: postbackNullMenuContactInfo}),
-    title: "Contact Info"}
+    // {type: "postback",
+    // payload: JSON.stringify({action: postbackNullMenuServiceHistory}),
+    // title: "Service History"},
+    //
+    // {type: "postback",
+    // payload: JSON.stringify({action: postbackNullMenuRequestQuote}),
+    // title: "Request a Quote"},
+    //
+    // {type: "postback",
+    // payload: JSON.stringify({action: postbackNullMenuSpecials}),
+    // title: "Specials"},
+    //
+    // {type: "postback",
+    // payload: JSON.stringify({action: postbackNullMenuContactInfo}),
+    // title: "Contact Info"}
   ];
   fbMessagingService.setCallToActions(pageID, token, "existing_thread", callToActions);
 }
@@ -114,7 +206,22 @@ function setupPageOnInit() {
   }
 }
 
-function fechUserModelForPhoneNumber(phoneNumber, pageID, completion) {
+function fetchUserModelByPSID(psid, pageID, completion) {
+  return UserModel.findOne({psid: psid, pageID: pageID}, function(err, targetUser){
+    if (!targetUser) {
+      log("Failed to find "+ psid);
+    } else {
+      log("Found user with psid=" + targetUser.psid);
+    }
+
+    if (completion) {
+      completion(targetUser);
+    }
+  });
+}
+
+
+function fetchUserModelForPhoneNumber(phoneNumber, pageID, completion) {
   return UserModel.findOne({phone: phoneNumber, pageID: pageID}, function(err, targetUser){
     if (!targetUser) {
       log("Failed to find "+ phoneNumber);
@@ -130,45 +237,58 @@ function fechUserModelForPhoneNumber(phoneNumber, pageID, completion) {
 
 // top level business logic functions
 function sendCarStatusMessageToPhoneNumber(carStatusMessage, pageID, phoneNumber) {
-  if (this.ignoreList.has(phoneNumber)) {
+  if (ignoreList.has(phoneNumber)) {
     log("Phonenumber is in ignore list: ", phoneNumber);
     return;
   }
 
   let fbMessage = carStatusMessage.fbFormat(phoneNumber);
-  log("Sending FB message to phone=", phoneNumber);
 
-  postMessageDataToPhoneNumber(phoneNumber, pageID, fbMessage, function(error){
-    log ("calling completion of postMessageDataToPhoneNumber");
-    if (error) {
-      log("Encountered error when sending message to ", phoneNumber);
-      let smsMessage = carStatusMessage.smsFormat;
-      log("Sending sms:",smsMessage);
-      sendSMSMessageToPhoneNumber(smsMessage, phoneNumber);
+  fetchUserModelForPhoneNumber(phoneNumber.slice(2), pageID, function(targetUser) {
+    let pageToken = pageInfos[pageID].token;
+    if (targetUser) {
+      log("Sending FB message to psid=", targetUser.psid);
+      fbMessagingService.postMessageDataToPageSenderID(targetUser.psid, pageToken, fbMessage, function(error) {
+        log ("calling completion of postMessageDataToPageSenderID");
+        if (error) {
+          log("Encountered error when sending message to ", phoneNumber);
+          let smsMessage = carStatusMessage.smsFormat;
+          let fromPhoneNumber = pageInfos[pageID].twilioPhone;
+          log("Sending sms:",smsMessage, " from phone #", fromPhoneNumber, " to phone#", phoneNumber);
+          sendSMSMessageToPhoneNumber(smsMessage, phoneNumber, fromPhoneNumber);
+        }
+      });
+    } else {
+      // log("Sending FB message to phone=", phoneNumber);
+      // fbMessagingService.postMessageDataToPhoneNumber(phoneNumber, pageToken, fbMessage, function(error){
+      //   log ("calling completion of postMessageDataToPhoneNumber");
+      //   if (error) {
+      //     log("Encountered error when sending message to ", phoneNumber);
+          let smsMessage = carStatusMessage.smsFormat;
+          let fromPhoneNumber = pageInfos[pageID].twilioPhone;
+          log("Sending sms:",smsMessage, " from phone #", fromPhoneNumber, " to phone#", phoneNumber);
+          sendSMSMessageToPhoneNumber(smsMessage, phoneNumber, fromPhoneNumber);
+      //   }
+      // });
     }
   });
 }
 
-function sendSMSMessageToPhoneNumber(smsMessage, phoneNumber, completion) {
+function sendSMSMessageToPhoneNumber(smsMessage, phoneNumber, fromPhoneNumber) {
   twilioClient.messages.create({
     to: phoneNumber,
-    from: "+16509008415",
+    from: fromPhoneNumber,
     body: smsMessage
   }, function(err, message) {
     if (err) {
       log("Encountered error when sending SMS:", err);
-      if (completion) {
-        completion(err);
-      }
     } else {
       log("Message sent without problems", message.sid);
-      if (completion) {
-        completion(null);
-      }
     }
   });
 }
 
+const postbackNullMenuResetChat = "postbackNullMenuResetChat";
 const postbackNullMenuServiceAppointment = "postbackNullMenuServiceAppointment";
 const postbackNullMenuServiceHistory = "postbackNullMenuServiceHistory";
 const postbackNullMenuRequestQuote = "postbackNullMenuRequestQuote";
@@ -189,40 +309,55 @@ const greetingPostbackButtons = [
   fbMessagingService.postbackPayload("No", JSON.stringify({action: postbackServicedBeforeNo}))];
 
 
-function attemptToSendMessageTo(senderID, pageToken, message) {
+function attemptToSendMessageTo(senderID, pageID, message) {
+
   if (ignoreList.has(senderID)) {
     return;
   }
 
+  let pageToken = pageInfos[pageID].token;
   fbMessagingService.sendFacebookTextMessage(senderID, pageToken, message);
 }
 
 function handlePostbackCommand(pageID, senderID, fullPostback) {
   let postback = fullPostback.split("_")[0];
-  let pageToken = pageInfos[pageID].token;
   if (postback == postbackGetStarted) {
+    saveFBUserInfoToDB(senderID, pageID);
     return sendGetStartedForPageIDSenderID(pageID, senderID);
+  } else if (postback == postbackServicedBeforeYes) {
+    if (!chatFlowByPageID[pageID].hasOwnProperty(senderID)) {
+      chatFlowByPageID[pageID][senderID] = {};
+    }
+    chatFlowByPageID[pageID][senderID].registeringPhone = true;
+    return attemptToSendMessageTo(senderID, pageID, `Welcome back! Please get started by entering your phone number that you use with our service.`);
+  } else if (postback == postbackServicedBeforeNo) {
+    return attemptToSendMessageTo(senderID, pageID, `We're always happy to see new customers. How can we help you today?`);
+  } else if (postback == postbackNullMenuResetChat) {
+    chatFlowByPageID[pageID][senderID] = {};
+    return sendGetStartedForPageIDSenderID(pageID, senderID);
+  } else if (postback == postbackNullMenuServiceAppointment) {
+    return attemptToSendMessageTo(senderID, pageID, `When would you like to come? We are open Monday through Friday from 8 am till 5 pm.`);
   } else if (postback == postbackWillPickUpToday) {
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks for confirmation!`);
   } else if (postback == postbackDenyPickupToday) {
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks for letting us know! We will wait for you the next business day.`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks for letting us know! We will wait for you the next business day.`);
   } else if (postback == postbackConfirmReceivingMessage) {
     let phoneNumber = fullPostback.split("_")[1];
     log("unblocking " + phoneNumber);
     ignoreList.delete(phoneNumber);
     ignoreList.delete(senderID);
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks for confirmation!`);
   } else if (postback == postbackDenyReceivingMessage) {
     let phoneNumber = fullPostback.split("_")[1];
     log("blocking " + phoneNumber);
     ignoreList.add(phoneNumber);
     ignoreList.add(senderID);
     log("User requested to avoid messaging them, id=", senderID);
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks. We won't send you any facebook or text messages anymore.`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks. We won't send you any facebook or text messages anymore.`);
   } else if (postback == postbackApproveRepairs) {
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks for confirmation!`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks for confirmation!`);
   } else if (postback == postbackRejectRepairs) {
-    return attemptToSendMessageTo(senderID, pageToken, `Thanks, we will call you shortly.`);
+    return attemptToSendMessageTo(senderID, pageID, `Thanks, we will call you shortly.`);
   } else {
     log("Unknown request ", postback);
   }
@@ -242,37 +377,72 @@ function isNumeric(num){
 }
 
 function handleIncomingMessageFromAdmin(adminID, pageID, text) {
-  let pageToken = pageInfos[pageID].token;
   let phoneNumber = text.substring(0,10);
   if (isNumeric(phoneNumber)) {
     if (ignoreList.has("+1" + phoneNumber)) {
-      attemptToSendMessageTo(adminID, pageToken, phoneNumber + " added themselves to ignore list. Please call this customer.");
+      attemptToSendMessageTo(adminID, pageID, phoneNumber + " added themselves to ignore list. Please call this customer.");
     } else {
       let message = text.substring(10, text.length).trim();
       if (message.length > 0) {
         log(`Sending to ${phoneNumber} text: ${message}`);
-        sendSMSMessageToPhoneNumber(message, phoneNumber, function(error) {
+        sendSMSMessageToPhoneNumber(message, phoneNumber, pageInfos[pageID].twilioPhone, function(error) {
           if (error) {
-            attemptToSendMessageTo(adminID, pageToken, error.message);
+            attemptToSendMessageTo(adminID, pageID, error.message);
           } else {
-            attemptToSendMessageTo(adminID, pageToken, "Delivered message to " + phoneNumber);
+            attemptToSendMessageTo(adminID, pageID, "Delivered message to " + phoneNumber);
           }
         });
       } else {
-        attemptToSendMessageTo(adminID, pageToken, "Message doesn't have correct body");
+        attemptToSendMessageTo(adminID, pageID, "Message doesn't have correct body");
       }
     }
   } else {
-    attemptToSendMessageTo(adminID, pageToken, "Message doesn't appear to have correct phone number:" + phoneNumber);
+    attemptToSendMessageTo(adminID, pageID, "Message doesn't appear to have correct phone number:" + phoneNumber);
+  }
+}
+
+function handleIncomingPhoneRegistration(senderID, pageID, text) {
+  try {
+    let phoneNumber = phoneUtil.parse(text, 'US');
+    if (phoneUtil.isValidNumber(phoneNumber)) {
+      let formattedPhoneNumber = phoneUtil.format(phoneNumber, PNF.E164);
+      // drop ""+1" from phone number
+      let dbPhoneNumber = formattedPhoneNumber.slice(2);
+      log("Saving dbPhoneNumber=", dbPhoneNumber);
+      savePhoneNumberToUserWith(senderID, pageID, dbPhoneNumber);
+      chatFlowByPageID[pageID][senderID].registeringPhone = false;
+      attemptToSendMessageTo(senderID, pageID, "Great, thanks for registering! You will now start receiving messages from us with updates on your car repair status on your messenger");
+    } else {
+      return attemptToSendMessageTo(senderID, pageID, text + " does not appear as a correct phone number. Please try again.");
+    }
+  } catch (err) {
+    return attemptToSendMessageTo(senderID, pageID, err + ". Please try again.");
   }
 }
 
 function handleMessage(senderID, pageID, text) {
-  for (let item of pageInfos[pageID].adminIDs) log(item);
   if (pageInfos[pageID].adminIDs.has(senderID)) {
-    handleIncomingMessageFromAdmin(senderID, pageID, text);
+    if (text === eraseCommand)  {
+      eraseDB();
+      attemptToSendMessageTo(senderID, pageID, "DB erased");
+    } else {
+      handleIncomingMessageFromAdmin(senderID, pageID, text);
+    }
   } else {
-    log(`Unhandled message from ${senderID} with ${text}`);
+    fetchUserModelByPSID(senderID, pageID, function(targetUser) {
+      if (!targetUser || !targetUser.phoneNumber) {
+        if (chatFlowByPageID[pageID].hasOwnProperty(senderID)) {
+          let userChatFlow = chatFlowByPageID[pageID][senderID];
+          if (userChatFlow.registeringPhone) {
+            return handleIncomingPhoneRegistration(senderID, pageID, text);
+          }
+
+          log(`Unhandled message from ${senderID} with ${text}`);
+        }
+      } else if (targetUser) {
+        log(`User has phone number ${targetUser.phoneNumber}, but we don't know what to do with user`);
+      }
+    });
   }
 }
 
@@ -288,6 +458,8 @@ class MyBot extends Bot {
       log = this.utils.log;
       request = this.utils.request;
       mongoose = this.utils.mongoose;
+
+      lazyInitDB();
 
       fbMessagingService.request = request;
       fbMessagingService.log = log;
@@ -338,10 +510,10 @@ class MyBot extends Bot {
       log("New message arrived: " + JSON.stringify(content));
       let dict = JSON.parse(JSON.stringify(content));
       log(dict.type);
-      let message = new carStatusMessage(dict);
-      let targetPhoneNumber = "+1" + dict["phone"];
+      let message = new CarStatusMessage(dict, pageInfos[dict.pageID], log);
+      let targetPhoneNumber = "+1" + dict.phone;
       if (!ignoreList.has(targetPhoneNumber)) {
-        log("Sending message to ", dict.pageID);
+        log("Sending message to page id", dict.pageID);
         sendCarStatusMessageToPhoneNumber(message, dict.pageID, targetPhoneNumber);
       } else {
         log("Phone number is in ignore list:", targetPhoneNumber);
@@ -362,9 +534,8 @@ class MyBot extends Bot {
       let trimmedPhoneNumber = smsMessageDict.From.replace("+1", "");
       let messageForAdmin = ["From:", trimmedPhoneNumber,"\nText:", smsMessageDict.Body].join(" ");
       let pageID = twilioPhoneToPageID[smsMessageDict.To];
-      let pageToken = pageInfos[pageID].token;
       for (let adminID of pageInfos[pageID].adminIDs) {
-        attemptToSendMessageTo(adminID, pageToken, messageForAdmin);
+        attemptToSendMessageTo(adminID, pageID, messageForAdmin);
       }
       return res.status(200);
     });

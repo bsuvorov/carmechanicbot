@@ -55,9 +55,9 @@ service.sendFacebookTextMessage = (senderID, pageToken, text) =>  {
   service.postMessageDataToPageSenderID(senderID, pageToken, messageData);
 };
 
-service.postMessageDataToPhoneNumber = (phoneNumber, pageID, messageData, completion) =>  {
+service.postMessageDataToPhoneNumber = (phoneNumber, pageToken, messageData, completion) =>  {
   let recipientInfo = { phone_number: phoneNumber };
-  service.postMessageDataRecipient(recipientInfo, pageInfos[pageID].token, messageData, completion);
+  service.postMessageDataRecipient(recipientInfo, pageToken, messageData, completion);
 };
 
 service.postMessageDataToPageSenderID = (senderID, pageToken, messageData, completion) =>  {
@@ -112,7 +112,7 @@ service.setWelcomeMessage = (pageID, token, message) => {
     }
   }, function (error, response) {
     if (error || response.body.error) {
-      log('Failed to sent greeting: ', error || response.body.error);
+      service.log('Failed to sent greeting: ', error || response.body.error);
     }
   });
 };
@@ -128,7 +128,7 @@ service.setCallToActions = (pageID, token, threadState, callToActionsArrray) => 
     }
   }, function (error, response) {
     if (error || response.body.error) {
-      log('Failed to sent call to actions for pageID / thread_state / error: ', pageID, threadState, error || response.body.error);
+      service.log('Failed to sent call to actions for pageID / thread_state / error: ', pageID, threadState, error || response.body.error);
     }
   });
 };
